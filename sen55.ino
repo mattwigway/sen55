@@ -9,10 +9,47 @@ const uint16_t FAN_CLEAN_CMD = 0x5607;
 const uint16_t READ_SERIAL_NUMBER_CMD = 0xD033;
 const uint16_t READ_STATUS_CMD = 0xD206;
 
-struct decimal {
-  uint16_t whole;
-  uint8_t decimal;
+const LiquidCrystal lcd(7, 8, 9, 10, 11, 12);
+
+// custom characters to save space
+const byte PM_PIXELS[8] = {
+  0b11100,
+  0b10010,
+  0b11100,
+  0b10000,
+  0b10001,
+  0b11011,
+  0b10101,
+  0b10001
 };
+
+const byte PM = 0;
+
+const byte PM25_PIXELS[8] = {
+  0b11000,
+  0b00100,
+  0b01000,
+  0b11101,
+  0b00110,
+  0b00110,
+  0b00001,
+  0b00110
+};
+
+const byte PM25 = 1;
+
+const byte PM10_PIXELS[8] = {
+  0b00100,
+  0b01100,
+  0b00100,
+  0b00000,
+  0b01100,
+  0b10010,
+  0b10010,
+  0b01100  
+};
+
+const byte PM10 = 2;
 
 // unlike every other I2C device in the world, SEN55 uses two byte commands?
 void write16(uint16_t cmd) {
@@ -29,24 +66,14 @@ uint16_t read16() {
   return (msb << 8) | lsb;
 }
 
-decimal readDecimal(uint16_t scale) {
-  uint16_t raw = read16();
-  decimal out;
-
-  out.whole = raw / scale;
-  out.decimal = static_cast<uint8_t>(raw / (scale / 10) % 10);
-
-  return out;
-}
-
-void printDecimal(decimal d) {
-  Serial.print(d.whole);
-  Serial.print(".");
-  Serial.print(d.decimal);
+float readScale(float scale) {
+  float raw = static_cast<float>(read16());
+  return raw / scale;
 }
 
 void setup() {
   Serial.begin(9600);
+  lcd.begin(20, 4);
   Wire.begin();
   Wire.setClock(1000);
 
@@ -69,43 +96,103 @@ void setup() {
   write16(FAN_CLEAN_CMD);
   Wire.endTransmission();
 
+  // custom characters to save display real estate
+  lcd.createChar(PM, PM_PIXELS);
+  lcd.createChar(PM25, PM25_PIXELS);
+  lcd.createChar(PM10, PM10_PIXELS);
+
 }
 
-void loop() {
-  // put your main code here, to run repeatedly:
+void loop() {  
   // read from sensor
   Serial.println("reading");
   Wire.beginTransmission(SEN55_ADDR);
   write16(READ_VALUES_CMD);
 
   Wire.requestFrom(SEN55_ADDR, 24);
-  decimal PM1 = readDecimal(10);
-  decimal PM25 = readDecimal(10);
-  decimal PM4 = readDecimal(10);
-  decimal PM10 = readDecimal(10);
-  decimal hum = readDecimal(100);
-  decimal temp = readDecimal(111); // dpcs say 200 for celsius. Farenheit is 9/5 C + 32, 200/(9/5) = 111.11111
-  temp.whole += 32; // handle the c/f offset
-  decimal voc = readDecimal(10);
-  decimal nox = readDecimal(10);
+  float pm1 = readScale(10.0);
+  float pm25 = readScale(10.0);
+  float pm4 = readScale(10.0);
+  float pm10 = readScale(10.0);
+  float hum = readScale(100.0);
+  // convert c to f
+  float tempf = readScale(200.0) * 9.0 / 5.0 + 32;
+  float voc = readScale(10.0);
+  float nox = readScale(10.0);
   Wire.endTransmission();
 
-  Serial.print("PM1: ");
-  printDecimal(PM1);
-  Serial.print(" PM2.5: ");
-  printDecimal(PM25);
-  Serial.print(" PM4: ");
-  printDecimal(PM4);
-  Serial.print(" PM10: ");
-  printDecimal(PM10);
-  Serial.print(" Humidity: ");
-  printDecimal(hum);
-  Serial.print("% Temp: ");
-  printDecimal(temp);
-  Serial.print("F VOC: ");
-  printDecimal(voc);
-  Serial.print(" NOx: ");
-  printDecimal(nox);
+  lcd.clear();
+
+
+  // just make it big so we don't run out of space even if we read wonky values
+  char buf[100];
+
+  // pm1
+  lcd.setCursor(0, 0);
+  lcd.write(PM);
+  lcd.print("1 ");
+  dtostrf(pm1, -7, 1, buf);
+  lcd.print(buf);
+  Serial.print("PM1");
+  Serial.println(buf);
+
+  lcd.setCursor(10, 0);
+  lcd.write(PM);
+  lcd.write(PM25);
+  lcd.print(" ");
+  dtostrf(pm25, -7, 1, buf);
+  lcd.print(buf);
+  Serial.print("PM2.5");
+  Serial.println(buf);
+
+  lcd.setCursor(0, 1);
+  lcd.write(PM);
+  lcd.print("4 ");
+  dtostrf(pm4, -7, 1, buf);
+  lcd.print(buf);
+  Serial.print("PM4");
+  Serial.println(buf);
+
+  lcd.setCursor(10, 1);
+  lcd.write(PM);
+  lcd.write(PM10);
+  lcd.print(" ");
+  dtostrf(pm10, -7, 1, buf);
+  lcd.print(buf);
+  Serial.print("PM10");
+  Serial.println(buf);
+
+  lcd.setCursor(0, 2);
+  dtostrf(tempf, 7, 2, buf);
+  lcd.print(buf);
+  lcd.print("F");
+  Serial.print(buf);
+  Serial.println("F");
+
+  lcd.setCursor(10, 2);
+  dtostrf(hum, 7, 2, buf);
+  lcd.print(buf);
+  lcd.print("%");
+  Serial.print(buf);
+  Serial.println("%");
+
+  lcd.setCursor(0, 3);
+  dtostrf(voc, -5, 1, buf);
+  lcd.print("VOC ");
+  lcd.print(buf);
+  Serial.println("VOC ");
+  Serial.print(buf);
+
+  lcd.setCursor(10, 3);
+  dtostrf(nox, -5, 1, buf);
+  lcd.print("NOx ");
+  lcd.print(buf);
+  Serial.println("NOx ");
+  Serial.print(buf);
+
+  
+
+  
   
   delay(1000);
 }
