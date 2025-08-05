@@ -2,7 +2,7 @@
 #include <Wire.h>
 #include <LiquidCrystal.h>
 
-const uint8_t SEN55_ADDR = 0x69; // nice
+const uint8_t SEN55_ADDR = 0x69;
 const uint16_t READ_VALUES_CMD = 0x03c4;
 const uint16_t START_MEASUREMENT_CMD = 0x0021;
 const uint16_t FAN_CLEAN_CMD = 0x5607;
