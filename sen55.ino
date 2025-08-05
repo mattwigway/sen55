@@ -190,9 +190,5 @@ void loop() {
   Serial.println("NOx ");
   Serial.print(buf);
 
-  
-
-  
-  
   delay(1000);
 }
