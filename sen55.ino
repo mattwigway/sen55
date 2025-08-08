@@ -9,6 +9,15 @@ const uint16_t FAN_CLEAN_CMD = 0x5607;
 const uint16_t READ_SERIAL_NUMBER_CMD = 0xD033;
 const uint16_t READ_STATUS_CMD = 0xD206;
 
+// reading status failed
+const uint32_t STATUS_ERR = 0xFFFFFFFF;
+const uint32_t FAN_SPEED_ERR = 1 << 21;
+const uint32_t FAN_CLEAN_ERR = 1 << 19;
+const uint32_t GAS_SENSOR_ERR = 1 << 7;
+const uint32_t RHT_ERR = 1 << 6;
+const uint32_t LASER_ERR = 1 << 5;
+const uint32_t FAN_ERR = 1 << 4;
+
 const LiquidCrystal lcd(7, 8, 9, 10, 11, 12);
 
 // custom characters to save space
@@ -58,24 +67,85 @@ void write16(uint16_t cmd) {
 }
 
 uint16_t read16() {
-  uint16_t msb = Wire.read();
-  uint16_t lsb = Wire.read();
+  uint8_t msb = Wire.read();
+  uint8_t lsb = Wire.read();
   uint8_t checksum = Wire.read();
+  uint8_t calc_checksum = calc_crc(msb, lsb);
 
-  // TODO checksum
-  return (msb << 8) | lsb;
+  if (checksum != calc_checksum) {
+    Serial.println("Checksum validation failed!");
+    Serial.print("MSB:");
+    Serial.println(msb);
+    Serial.print("LSB:");
+    Serial.println(lsb);
+    Serial.print("Expected checksum:");
+    Serial.println(checksum);
+    Serial.print("Calculated checksum:");
+    Serial.println(calc_checksum);
+    return 0xFFFF;
+  }
+
+  return (static_cast<uint16_t>(msb) << 8) | static_cast<uint16_t>(lsb);
 }
 
 float readScale(float scale) {
-  float raw = static_cast<float>(read16());
+  uint16_t raw16 = read16();
+  if (raw16 == 0xffff) return -1.0;
+  float raw = static_cast<float>(raw16);
   return raw / scale;
+}
+
+// copied from SEN55 datasheet modified slightly
+uint8_t add_byte(uint8_t crc, uint8_t byt) {
+  crc ^= byt;
+  for (uint8_t bt = 8; bt > 0; --bt) {
+    if (crc & 0x80) {
+      crc = (crc << 1) ^ 0x31u;
+    } else {
+      crc = crc << 1;
+    }
+  }
+  return crc;
+}
+
+uint8_t calc_crc(uint8_t msb, uint8_t lsb) {
+  uint8_t crc = 0xff;
+  crc = add_byte(crc, msb);
+  crc = add_byte(crc, lsb);
+  return crc;
+}
+
+uint32_t read_status() {
+  // this is reading garbage, and also messing up the other measurements, not sure why
+  // make it a no op
+  return 0;
+  
+  Wire.beginTransmission(SEN55_ADDR);
+  write16(READ_STATUS_CMD);
+  delay(20);
+  Wire.requestFrom(SEN55_ADDR, 6);
+  uint32_t msbb = read16();
+  uint32_t lsbb = read16();  
+  Wire.endTransmission();
+
+  if (msbb == 0xFFFF || lsbb == 0xFFFF) {
+    Serial.print("Status error, read ");
+    Serial.print(msbb);
+    Serial.print(lsbb);
+    return STATUS_ERR;
+  }
+  
+  uint32_t status = msbb << 16 | lsbb;
+  Serial.print("Status");
+  Serial.println(status);
+  return status;
 }
 
 void setup() {
   Serial.begin(9600);
   lcd.begin(20, 4);
   Wire.begin();
-  Wire.setClock(1000);
+  Wire.setClock(1000);  
 
   // begin readings
   Wire.beginTransmission(SEN55_ADDR);
@@ -104,11 +174,65 @@ void setup() {
 }
 
 void loop() {  
+  // check status
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  uint8_t line = 0;
+  bool err = false;
+
+  uint32_t status = read_status();
+  if (status == STATUS_ERR) {
+    lcd.print("Error reading status");
+    delay(1000);
+    return;
+  }
+
+  if (status & FAN_SPEED_ERR) {
+    lcd.print("Fan speed error");
+    lcd.setCursor(0, ++line);
+    err = true;
+  }
+
+  if (status & FAN_CLEAN_ERR) {
+    lcd.print("Fan cleaning");
+    lcd.setCursor(0, ++line);
+    err = true;
+  }
+
+  if (status & GAS_SENSOR_ERR) {
+    lcd.print("Gas sensor error");
+    lcd.setCursor(0, ++line);
+    err = true;
+  }
+
+  if (status & RHT_ERR) {
+    lcd.print("Humidity comm error");
+    lcd.setCursor(0, ++line);
+    err = true;
+  }
+
+  if (status & LASER_ERR) {
+    lcd.print("Laser current error");
+    lcd.setCursor(0, ++line);
+    err = true;
+  }
+
+  if (status & FAN_ERR) {
+    lcd.print("Fan blocked/broken");
+    err = true;
+  }
+
+  if (err) {
+    delay(1000);
+    return;
+  }
+  
   // read from sensor
   Serial.println("reading");
   Wire.beginTransmission(SEN55_ADDR);
   write16(READ_VALUES_CMD);
-
+  // wait for buffer to fill
+  delay(15);
   Wire.requestFrom(SEN55_ADDR, 24);
   float pm1 = readScale(10.0);
   float pm25 = readScale(10.0);
@@ -120,9 +244,6 @@ void loop() {
   float voc = readScale(10.0);
   float nox = readScale(10.0);
   Wire.endTransmission();
-
-  lcd.clear();
-
 
   // just make it big so we don't run out of space even if we read wonky values
   char buf[100];
